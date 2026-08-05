@@ -3,6 +3,57 @@ import numba as nb
 from ..data_objects import Period, TierIndex, Tier
 
 
+@nb.njit
+def get_tou_info(month: int, hour: int, schedule: np.array, struct: np.array):
+    """Returns the rate structure array (a set of tiers) for the supplied month/hour.
+
+    :param month: Integer in the range [1,12] representing the month.
+    :param hour: Integer in the range [0,23] representing the hour of the day.
+    :param schedule: A Numpy array containing the time of use period indexes.
+                      May be 1-D (months only) or 2-D (months x hours).
+    :param struct: A Numpy array containing the associated rate information.
+    :returns: A Numpy array of the rate information for the current month and hour.
+            Returns *None* if either **struct** or **schedule** are *None*.
+    :raises IndexError: If either **month** or **hour** are out of range.
+    """
+    if month < 1 or month > 12 or hour < 0 or hour > 23:
+        raise IndexError('Supplied month or hour is out of range')
+
+    if schedule is None or struct is None:
+        return None
+
+    month_index = month - 1
+
+    if schedule.ndim == 2:
+        return struct[schedule[month_index, hour]]
+    elif schedule.ndim == 1:
+        return struct[schedule[month_index]]
+    else:
+        raise ValueError(
+            'Schedule has wrong number of dimensions. Must be of dimension 1 or 2.'
+        )
+
+
+@nb.njit
+def get_flat_month(month: int, schedule: np.array, struct: np.array):
+    """Returns the rate structure array (a set of tiers) for a flat (monthly) demand charge.
+
+    :param month: Integer in the range [1,12] representing the month.
+    :param schedule: A Numpy array containing the time of use period indexes.
+    :param struct: A Numpy array containing the associated rate information.
+    :returns: A Numpy array of the rate information for the current month.
+            Returns *None* if either **struct** or **schedule** are *None*.
+    :raises IndexError: If **month** is out of range.
+    """
+    if month < 1 or month > 12:
+        raise IndexError('Supplied month is out of range')
+
+    if schedule is None or struct is None:
+        return None
+
+    return struct[schedule[month - 1]]
+
+
 @nb.jit(nopython=True, nogil=False)
 def get_Tier(qty: float, period: Period,
              struct: np.array, schedule: np.array):

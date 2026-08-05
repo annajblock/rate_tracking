@@ -115,6 +115,79 @@ class OpenEIRates(object):
 
         return []
 
+    def get_rates_for_utility(
+            self,
+            utility: str,
+            sector: str = '',
+            detail: str = 'full',
+            page_size: int = 500,
+            max_pages: int = 20,
+            append: bool = False,
+        ):
+        """Fetches a utility's full rate history (every label OpenEI has ever issued for it,
+        i.e. every year's re-filing) using the ``ratesforutility`` API parameter, paginating
+        through results until fewer than ``page_size`` records come back.
+
+        This does not filter by date. Callers wanting only e.g. the last 10 years should
+        filter the returned ``Rate`` objects on ``begin_date``/``end_date`` afterwards - OpenEI
+        doesn't support pre-filtering to a *span* of dates server-side, only a single
+        ``effective_on_date``.
+
+        :param  utility:    The exact utility name as OpenEI knows it (see the ``utility``
+                             field on existing ``Rate`` objects, or the utility_companies endpoint).
+        :type   utility:    ``str``
+
+        :param  sector:     One of 'Residential', 'Commercial', 'Industrial', 'Lighting'.
+                             Leave blank to fetch all sectors.
+        :type   sector:     ``str``
+
+        :param  detail:     'full' (get every field, needed to build a RateSchedule/store charges)
+                             or 'minimal'. Defaults to 'full'.
+        :type   detail:     ``str``
+
+        :param  page_size:  How many records to request per page. OpenEI caps this at 500.
+        :type   page_size:  ``int``
+
+        :param  max_pages:  A safety limit on how many pages to fetch, in case pagination
+                             doesn't terminate as expected. Defaults to 20 (up to 10,000 records).
+        :type   max_pages:  ``int``
+
+        :param  append:     If ``True``, add the fetched rates to ``self.rates`` instead of
+                             just returning them.
+        :type   append:     ``bool``
+
+        :return:    A ``list`` of ``Rate`` objects.
+        """
+        params = {
+            'ratesforutility': utility,
+            'detail': detail,
+            'limit': min(page_size, 500),
+        }
+        if sector and sector.title() in self.allowed_sectors:
+            params['sector'] = sector.title()
+
+        rates = []
+        offset = 0
+        for _ in range(max_pages):
+            page_params = dict(params, offset=offset)
+            code, items = self.api.rate_query(page_params)
+
+            if code != 200 or not items:
+                break
+
+            rates.extend(Rate(item) for item in items)
+
+            if len(items) < params['limit']:
+                # Short page - we've reached the end.
+                break
+
+            offset += params['limit']
+
+        if append:
+            self.rates.extend(rates)
+
+        return rates
+
     def get_rate_by_label(self, label: str, replace = False, append=False, use_cached=False):
         """Looks up rates based onthe rate's label.
 
@@ -140,7 +213,8 @@ class OpenEIRates(object):
                     return Rate
 
         params = {
-            'getpage': label
+            'getpage': label,
+            'detail': 'full',
         }
         code, items = self.api.rate_query(params)
 

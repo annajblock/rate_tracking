@@ -4,14 +4,14 @@ import pandas as pd
 from pandas.tseries.holiday import AbstractHolidayCalendar
 from pandas.tseries.holiday import USFederalHolidayCalendar
 
-from .helpers.sched import get_tou
-from .helpers.costs import get_tou_tier, get_tou, calculate_flat_cost, calculate_tou_cost, process_period, period_cost
+from .helpers.sched import get_Tier
+from .helpers.costs import energy_cost, tou_demand_cost, flat_demand_cost, calculate_tou_cost, calculate_flat_cost
 
-from .helpers.demand import get_Peak
+from .helpers.demand import peak_period, get_interval_max_demand
 
 from . import logger
 
-from .data_objects import Peak, Tier
+from .data_objects import Peak, Tier, TierIndex
 
 class RateSchedule(object):
     """Contains all the pricing and time-of-use (TOU) information for a particular rate.
@@ -95,8 +95,8 @@ class RateSchedule(object):
         self.demand_minimum = rate_info.get('peakkwcapacitymin', 0)
         self.demand_maximum = rate_info.get('peakkwcapacitymax', 0)
 
-        # How long is our window for demand? (in minutes). 
-        self.demand_window = rate_info.get('demandratewindow', RateSchedule.default_demand_window)
+        # How long is our window for demand? (in minutes).
+        self.demand_window = rate_info.get('demandwindow', RateSchedule.default_demand_window)
 
         # Rate Structures
         # A rate structure is essentially a list of lists with rate information
@@ -150,13 +150,13 @@ class RateSchedule(object):
 
 
         self.demand_ratchet_pct = np.array(
-            rate_info.get('demandrachetpercentage', [0.0 for i in range(12)]),
+            rate_info.get('demandratchetpercentage', [0.0 for i in range(12)]),
             dtype = np.float32
         )
 
 
         # Fixed monthly charges
-        self.fixed_monthly_charge = rate_info.get('fixedmonthlycharge', 0)
+        self.fixed_monthly_charge = rate_info.get('fixedchargefirstmeter', 0)
         self.monthly_min_charge = rate_info.get('minmonthlycharge', 0)
         self.annual_min_charge = rate_info.get('annualmincharge', 0)
 
@@ -196,11 +196,11 @@ class RateSchedule(object):
                 period_a = []
                 
                 for tier in period:
-                    tier_a = [0 for i in range(RateIndex.ARRAY_LENGTH)]
-                    tier_a[RateIndex.MAX_USE] = tier.get('max', 0.0)
-                    tier_a[RateIndex.RATE] = tier.get('rate', 0.0)
-                    tier_a[RateIndex.ADJ] = tier.get('rate', 0.0)
-                    tier_a[RateIndex.SELL] = tier.get('sell', 0.0)
+                    tier_a = [0 for i in range(TierIndex.ARRAY_LENGTH)]
+                    tier_a[TierIndex.MAX] = tier.get('max', 0.0)
+                    tier_a[TierIndex.RATE] = tier.get('rate', 0.0)
+                    tier_a[TierIndex.ADJ] = tier.get('rate', 0.0)
+                    tier_a[TierIndex.SELL] = tier.get('sell', 0.0)
                     period_a.append(tier_a)
                 
                 struct_a.append(period_a)
@@ -303,19 +303,19 @@ class RateSchedule(object):
         group_mode = {
             'day': 'D',
             'week': 'W',
-            'month': 'M',
-            'quarter': 'Q',
-            'year': 'A'
+            'month': 'ME',
+            'quarter': 'QE',
+            'year': 'YE'
         }.get(agg.lower(), 'D')
 
         grouper = pd.Grouper(freq=group_mode)
-        mg = pd.Grouper(freq='M')
+        mg = pd.Grouper(freq='ME')
 
         interval_delta = demand_series.index[1] - demand_series.index[0]
 
         interval_hours = interval_delta / pd.Timedelta('1h')
 
-        demand_window_intervals = round( interval_delta / pd.Timedelta('{}min'.format(self.demand_window)))
+        demand_window_intervals = round( pd.Timedelta('{}min'.format(self.demand_window)) / interval_delta )
 
         # First, check out these demand charges
         if (self.demand_rates is not None) and (self.demand_weekday_schedule is not None) and (self.demand_weekend_schedule is not None):
@@ -413,7 +413,8 @@ class RateSchedule(object):
                     
         # If we need to sum everything up, let's do it
         df['total'] = df.apply(
-            lambda x: x['energy_cost'] + x['tou_demand_cost'] + x['coincident_cost'] + x['flat_demand_cost'] + x['fixed_cost']
+            lambda x: x['energy_cost'] + x['tou_demand_cost'] + x['coincident_cost'] + x['flat_demand_cost'] + x['fixed_cost'],
+            axis=1
         )
 
         # Finally, aggregate according to the needed aggregation scheme
